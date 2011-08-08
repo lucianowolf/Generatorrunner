@@ -36,13 +36,30 @@
     #define PATH_SPLITTER ":"
 #endif
 
+#define ARG_LENGTH 38
+
 static void printOptions(QTextStream& s, const QMap<QString, QString>& options) {
     QMap<QString, QString>::const_iterator it = options.constBegin();
     s.setFieldAlignment(QTextStream::AlignLeft);
     for (; it != options.constEnd(); ++it) {
         s << "  --";
-        s.setFieldWidth(38);
-        s << it.key() << it.value();
+        s.setFieldWidth(ARG_LENGTH);
+        s << it.key();
+
+        s.setFieldWidth(ARG_LENGTH + 5); //include that "  --" at beginning
+        if (it.key().length() > ARG_LENGTH)
+            s << endl;
+
+        int breaks = it.value().count("\n");
+        if (breaks)
+            for (int counter = 0; counter <= breaks; ++counter) {
+                s << it.value().section("\n", counter, counter);
+                if (counter < breaks)
+                    s << endl;
+            }
+        else
+            s << it.value();
+
         s.setFieldWidth(0);
         s << endl;
     }
@@ -168,20 +185,20 @@ void printUsage(const GeneratorList& generators)
     << "generator [options] header-file typesystem-file\n\n"
     "General options:\n";
     QMap<QString, QString> generalOptions;
-    generalOptions.insert("project-file=<file>", "text file containing a description of the binding project. Replaces and overrides command line arguments");
+    generalOptions.insert("project-file=<file>", "Text file containing a description of\nthe binding project. Replaces and\noverrides command line arguments");
     generalOptions.insert("debug-level=[sparse|medium|full]", "Set the debug level");
     generalOptions.insert("silent", "Avoid printing any message");
     generalOptions.insert("help", "Display this help and exit");
     generalOptions.insert("no-suppress-warnings", "Show all warnings");
-    generalOptions.insert("output-directory=<path>", "The directory where the generated files will be written");
+    generalOptions.insert("output-directory=<path>", "The directory where the generated\nfiles will be written");
     generalOptions.insert("include-paths=<path>[" PATH_SPLITTER "<path>" PATH_SPLITTER "...]", "Include paths used by the C++ parser");
-    generalOptions.insert("typesystem-paths=<path>[" PATH_SPLITTER "<path>" PATH_SPLITTER "...]", "Paths used when searching for typesystems");
-    generalOptions.insert("documentation-only", "Do not generates any code, just the documentation");
-    generalOptions.insert("license-file=<license-file>", "File used for copyright headers of generated files");
+    generalOptions.insert("typesystem-paths=<path>[" PATH_SPLITTER "<path>" PATH_SPLITTER "...]", "Paths used when searching for\ntypesystems");
+    generalOptions.insert("documentation-only", "Do not generates any code, just the\ndocumentation");
+    generalOptions.insert("license-file=<license-file>", "File used for copyright headers of\ngenerated files");
     generalOptions.insert("version", "Output version information and exit");
     generalOptions.insert("generator-set=<\"generator module\">", "generator-set to be used. e.g. qtdoc");
-    generalOptions.insert("api-version=<\"version\">", "Specify the supported api version used to generate the bindings");
-    generalOptions.insert("drop-type-entries=\"<TypeEntry0>[;TypeEntry1;...]\"", "Semicolon separated list of type system entries (classes, namespaces, global functions and enums) to be dropped from generation.");
+    generalOptions.insert("api-version=<\"version\">", "Specify the supported api version used\nto generate the bindings");
+    generalOptions.insert("drop-type-entries=\"<TypeEntry0>[;TypeEntry1;...]\"", "Semicolon separated list of typesystem\nentries (classes, namespaces, global\nfunctions and enums) to be dropped\nfrom generation.");
     printOptions(s, generalOptions);
 
     foreach (Generator* generator, generators) {
@@ -304,7 +321,6 @@ int main(int argc, char *argv[])
         extractor.addTypesystemSearchPath(args.value("typesystem-paths").split(PATH_SPLITTER));
     if (!args.value("include-paths").isEmpty())
         extractor.addIncludePath(args.value("include-paths").split(PATH_SPLITTER));
-
 
     QString cppFileName = args.value("arg-1");
     QString typeSystemFileName = args.value("arg-2");
