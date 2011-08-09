@@ -25,7 +25,10 @@
 #include <QLinkedList>
 #include <QLibrary>
 #include <QDomDocument>
+#include <QSharedMemory>
+#include <QProcess>
 #include <iostream>
+#include <signal.h>
 #include <apiextractor.h>
 #include "generatorrunnerconfig.h"
 #include "generator.h"
@@ -36,7 +39,14 @@
     #define PATH_SPLITTER ":"
 #endif
 
-#define ARG_LENGTH 38
+#define ARG_LENGTH    38
+#define MAX_INSTANCES 10
+
+enum {
+    UPDATED,
+    WAITING,
+    ERROR
+};
 
 static void printOptions(QTextStream& s, const QMap<QString, QString>& options) {
     QMap<QString, QString>::const_iterator it = options.constBegin();
@@ -199,6 +209,7 @@ void printUsage(const GeneratorList& generators)
     generalOptions.insert("generator-set=<\"generator module\">", "generator-set to be used. e.g. qtdoc");
     generalOptions.insert("api-version=<\"version\">", "Specify the supported api version used\nto generate the bindings");
     generalOptions.insert("drop-type-entries=\"<TypeEntry0>[;TypeEntry1;...]\"", "Semicolon separated list of typesystem\nentries (classes, namespaces, global\nfunctions and enums) to be dropped\nfrom generation.");
+    generalOptions.insert("max-instances=<\"max\">", "Limits the number of generatorrunner\ninstances that can be called at the\nsame time");
     printOptions(s, generalOptions);
 
     foreach (Generator* generator, generators) {
@@ -208,6 +219,90 @@ void printUsage(const GeneratorList& generators)
             printOptions(s, generator->options());
         }
     }
+}
+
+int checkInstances(QSharedMemory &instControl, qint64 currentProc) {
+    qint64 *instControlData;
+
+    instControlData = (qint64 *)instControl.data();
+    for (int counter = 1; counter <= *instControlData; counter++)
+        if (kill(*(instControlData + counter), 0)) {
+            *(instControlData + counter) = currentProc;
+            return UPDATED;
+        }
+    return WAITING;
+}
+
+int instControlUpdate(const int maxInst, QSharedMemory &instControl, bool clean) {
+    qint64 *instControlData;
+    int instances = 1;
+
+    instControlData = (qint64 *)instControl.data();
+
+    qint64 currentProc = QCoreApplication::applicationPid();
+    qDebug() << "luck:" << currentProc;
+
+    if (clean) {
+        *instControlData = 1;
+        *(instControlData + 1) = currentProc;
+
+        //qDebug() << "indo dormir!";
+        //sleep(5);
+
+        return UPDATED;
+//    } else
+//        sleep(3);
+    }
+
+    instances = *instControlData;
+    qDebug() << "proc" << instances << ":" << *(instControlData + instances);
+
+    if (instances < maxInst) {
+        *instControlData = ++instances;
+        *(instControlData + instances) = currentProc;
+    } else {
+        return checkInstances(instControl, currentProc);
+    }
+    qDebug() << "instances:" << instances;
+    return UPDATED;
+}
+
+int limitInstances(QString maxInstancesStr, QString key) {
+    bool ok, clean = true;
+    const int maxInst = maxInstancesStr.toInt(&ok);
+
+    if (!ok || maxInst > MAX_INSTANCES)
+        return EXIT_FAILURE;
+
+    qDebug() << "key:" << key;
+    QSharedMemory instControl(key);
+
+    if (!instControl.create(sizeof(qint64) * (MAX_INSTANCES + 1))) {
+        clean = false;
+        if (instControl.error() != QSharedMemory::AlreadyExists)
+            qDebug() << "create:" << instControl.errorString() << instControl.error();
+    }
+
+    if (!instControl.isAttached())
+        if (!instControl.attach())
+            qDebug() << "attach:" << instControl.errorString() << instControl.error();
+
+    /*Unfortunately the lock() function doesn't work as expected.
+      The code is safe enough to be used until Qt people provide
+      a bug fix for: https://bugreports.qt.nokia.com//browse/QTBUG-10364 */
+    if (!instControl.lock())
+        qDebug() << "lock:" << instControl.errorString();
+
+    qDebug() << "control update";
+
+    while (instControlUpdate(maxInst, instControl, clean) == WAITING)
+        sleep(10);
+
+    instControl.unlock();
+    qDebug() << "memoria unlocada";
+    instControl.detach();
+
+    return EXIT_SUCCESS;
 }
 
 int main(int argc, char *argv[])
@@ -321,6 +416,12 @@ int main(int argc, char *argv[])
         extractor.addTypesystemSearchPath(args.value("typesystem-paths").split(PATH_SPLITTER));
     if (!args.value("include-paths").isEmpty())
         extractor.addIncludePath(args.value("include-paths").split(PATH_SPLITTER));
+
+    if (args.contains("max-instances"))
+        if (limitInstances(args["max-instances"], "testing") == EXIT_FAILURE) {
+            std::cerr << argv[0] << ": You must set max-instances using numbers [0 - " << MAX_INSTANCES << "]" << std::endl;
+            return EXIT_FAILURE;
+        }
 
     QString cppFileName = args.value("arg-1");
     QString typeSystemFileName = args.value("arg-2");
